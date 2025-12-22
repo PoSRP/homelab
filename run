@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -eou pipefail
+cd "$(dirname "$0")/tui"
+
+if [[ ! -d .venv ]]; then
+  python3 -m venv .venv
+  .venv/bin/pip install -r requirements.txt
+fi
+
+# Spawn a private ssh-agent for this session, bypassing the GNOME keyring
+# so sentinel SSH checks don't trigger GUI pop-ups. Killed on exit.
+eval "$(ssh-agent -s)"
+trap "ssh-agent -k >/dev/null 2>&1" EXIT
+unset SSH_ASKPASS   # force terminal prompt, not GUI dialog
+ssh-add || true     # skip gracefully if no keys found or user cancels
+
+.venv/bin/python app.py

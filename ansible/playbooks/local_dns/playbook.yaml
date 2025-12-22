@@ -1,0 +1,219 @@
+---
+- name: Setup local DNS server and reverse proxy
+  hosts: local_dns
+  become: true
+  gather_facts: false
+
+  vars:
+    dns_domain: homelab.local
+    proxy_ip: 192.168.1.207
+
+    dns_upstream:
+      - 1.1.1.1
+      - 1.0.0.1
+
+    proxy_backends:
+      - name: proxmox
+        backend: https://192.168.1.200:8006
+        https: true
+      - name: minio
+        backend: http://192.168.1.220:9001
+      - name: firefly
+        backend: http://192.168.1.210:80
+      - name: fireflyimport
+        backend: http://192.168.1.210:81
+
+  handlers:
+    - name: Restart dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: restarted
+
+    - name: Restart Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    - name: Install packages
+      ansible.builtin.apt:
+        name:
+          - dnsmasq
+          - nginx
+        state: present
+        update_cache: true
+
+    - name: Ensure resolved config directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Disable systemd-resolved stub listener
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/no-stub.conf
+        mode: "0644"
+        content: |
+          [Resolve]
+          DNSStubListener=no
+
+    - name: Stop dnsmasq to vacate port 53
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: stopped
+      failed_when: false
+
+    - name: Restart systemd-resolved to release port 53
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Wait for port 53 to be free
+      ansible.builtin.wait_for:
+        port: 53
+        state: stopped
+        timeout: 15
+
+    - name: Add hostname to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "127.0.1.1 local-dns"
+        state: present
+
+    - name: Write dnsmasq configuration
+      ansible.builtin.copy:
+        dest: /etc/dnsmasq.conf
+        mode: "0644"
+        content: |
+          listen-address=0.0.0.0
+          bind-interfaces
+
+          # Local domain - never forwarded upstream
+          local=/{{ dns_domain }}/
+          domain={{ dns_domain }}
+
+          # Upstream resolvers
+          {% for ns in dns_upstream %}
+          server={{ ns }}
+          {% endfor %}
+
+          no-hosts
+          domain-needed
+          bogus-priv
+          neg-ttl=60
+
+          # This VM itself
+          address=/dns.{{ dns_domain }}/{{ proxy_ip }}
+
+          # Proxied services - all resolve to this VM
+          {% for backend in proxy_backends %}
+          address=/{{ backend.name }}.{{ dns_domain }}/{{ proxy_ip }}
+          {% endfor %}
+      notify: Restart dnsmasq
+
+    - name: Create SSL directory
+      ansible.builtin.file:
+        path: /etc/nginx/ssl
+        state: directory
+        mode: "0700"
+
+    - name: Generate self-signed wildcard certificate for {{ dns_domain }}
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -nodes -days 3650 -newkey rsa:2048
+          -keyout /etc/nginx/ssl/homelab.key
+          -out /etc/nginx/ssl/homelab.crt
+          -subj "/CN=*.{{ dns_domain }}"
+          -addext "subjectAltName=DNS:*.{{ dns_domain }},DNS:{{ dns_domain }}"
+        creates: /etc/nginx/ssl/homelab.crt
+      notify: Restart Nginx
+
+    - name: Write Nginx WebSocket upgrade map
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/ws_upgrade.conf
+        mode: "0644"
+        content: |
+          map $http_upgrade $connection_upgrade {
+              default upgrade;
+              ''      close;
+          }
+      notify: Restart Nginx
+
+    - name: Remove default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+
+    - name: Write Nginx vhost for each service
+      ansible.builtin.copy:
+        dest: "/etc/nginx/sites-enabled/{{ backend.name }}.conf"
+        mode: "0644"
+        content: |
+          {% if backend.https is defined and backend.https %}
+          server {
+              listen 80;
+              server_name {{ backend.name }}.{{ dns_domain }};
+              return 301 https://$host$request_uri;
+          }
+
+          server {
+              listen 443 ssl;
+              server_name {{ backend.name }}.{{ dns_domain }};
+
+              ssl_certificate /etc/nginx/ssl/homelab.crt;
+              ssl_certificate_key /etc/nginx/ssl/homelab.key;
+
+              location / {
+                  proxy_pass {{ backend.backend }};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $connection_upgrade;
+                  proxy_set_header Host {{ backend.proxy_host | default('$host') }};
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_ssl_verify off;
+              }
+          }
+          {% else %}
+          server {
+              listen 80;
+              server_name {{ backend.name }}.{{ dns_domain }};
+
+              location / {
+                  proxy_pass {{ backend.backend }};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $connection_upgrade;
+                  proxy_set_header Host {{ backend.proxy_host | default('$host') }};
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+          }
+          {% endif %}
+      loop: "{{ proxy_backends }}"
+      loop_control:
+        loop_var: backend
+      notify: Restart Nginx
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        enabled: true
+        state: started
+
+    - name: Enable and start Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+        state: started
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml

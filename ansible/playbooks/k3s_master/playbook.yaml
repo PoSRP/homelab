@@ -1,0 +1,255 @@
+---
+- name: Configure k3s master
+  hosts: k3s_master
+  become: true
+  gather_facts: false
+
+  vars:
+    k3s_version: "v1.33.1+k3s1"
+    helm_version: "v3.16.0"
+    arc_chart_version: "0.9.3"
+    github_token: "{{ lookup('env', 'ANSIBLE_VAR_GITHUB_TOKEN') }}"
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    - name: Validate GitHub token
+      ansible.builtin.assert:
+        that:
+          - github_token | length > 0
+        fail_msg: "ANSIBLE_VAR_GITHUB_TOKEN must be set"
+
+    - name: Install curl
+      ansible.builtin.apt:
+        name: curl
+        state: present
+
+    # --- k3s ---
+
+    - name: Install k3s server
+      ansible.builtin.shell:
+        cmd: curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for k3s node to be ready
+      ansible.builtin.command: k3s kubectl get nodes
+      register: result
+      until: result.rc == 0 and "Ready" in result.stdout
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Create kubeconfig directory
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: "0700"
+
+    - name: Link kubeconfig
+      ansible.builtin.file:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /root/.kube/config
+        state: link
+
+    # --- Helm ---
+
+    - name: Install Helm
+      ansible.builtin.shell:
+        cmd: >
+          curl -sfL https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz |
+          tar xzf - --strip-components=1 -C /usr/local/bin linux-amd64/helm
+        creates: /usr/local/bin/helm
+
+    # --- ARC controller ---
+
+    - name: Install ARC controller
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - arc
+          - --namespace
+          - arc-systems
+          - --create-namespace
+          - --version
+          - "{{ arc_chart_version }}"
+          - --wait
+          - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+
+    # --- Runner scale set ---
+
+    - name: Ensure arc-runners namespace exists
+      ansible.builtin.command: kubectl create namespace arc-runners
+      register: ns_result
+      failed_when: ns_result.rc != 0 and "already exists" not in ns_result.stderr
+      changed_when: ns_result.rc == 0
+
+    - name: Apply GitHub token secret
+      ansible.builtin.shell: |
+        kubectl create secret generic github-token \
+          --namespace arc-runners \
+          --from-literal=github_token="{{ github_token }}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      changed_when: false
+
+    - name: Write runner scale set values
+      ansible.builtin.copy:
+        dest: /tmp/arc-runner-values.yaml
+        content: |
+          template:
+            spec:
+              securityContext:
+                supplementalGroups:
+                  - 993
+              volumes:
+                - name: work
+                  emptyDir: {}
+                - name: dind-sock
+                  emptyDir: {}
+                # - name: kvm
+                #   hostPath:
+                #     path: /dev/kvm
+                #     type: CharDevice
+              containers:
+                - name: runner
+                  image: ghcr.io/actions/actions-runner:latest
+                  command: ["/home/runner/run.sh"]
+                  env:
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    # - name: kvm
+                    #   mountPath: /dev/kvm
+                  securityContext:
+                    capabilities:
+                      add:
+                        - SYS_NICE
+                    # seccompProfile:
+                    #   type: Unconfined
+                - name: dind
+                  image: docker:dind
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=1001
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+
+    - name: Install ARC runner scale set (nixos-desktop)
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - arc-runner-set-nixos-desktop
+          - --namespace
+          - arc-runners
+          - --version
+          - "{{ arc_chart_version }}"
+          - --set
+          - githubConfigUrl=https://github.com/PoSRP/nixos-desktop
+          - --set
+          - githubConfigSecret=github-token
+          - --set
+          - runnerScaleSetName=selfhosted-nixos-desktop
+          - --set
+          - minRunners=1
+          - --set
+          - maxRunners=1
+          - --values
+          - /tmp/arc-runner-values.yaml
+          - --wait
+          - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+    - name: Install ARC runner scale set (stm32-sensor-capture)
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - arc-runner-set-stm32-sensor-capture
+          - --namespace
+          - arc-runners
+          - --version
+          - "{{ arc_chart_version }}"
+          - --set
+          - githubConfigUrl=https://github.com/PoSRP/stm32-sensor-capture
+          - --set
+          - githubConfigSecret=github-token
+          - --set
+          - runnerScaleSetName=selfhosted-stm32-sensor-capture
+          - --set
+          - minRunners=1
+          - --set
+          - maxRunners=4
+          - --values
+          - /tmp/arc-runner-values.yaml
+          - --wait
+          - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+    - name: Install ARC runner scale set (stm32-rtos-bootloader)
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - arc-runner-set-stm32-rtos-bootloader
+          - --namespace
+          - arc-runners
+          - --version
+          - "{{ arc_chart_version }}"
+          - --set
+          - githubConfigUrl=https://github.com/PoSRP/stm32-rtos-bootloader
+          - --set
+          - githubConfigSecret=github-token
+          - --set
+          - runnerScaleSetName=selfhosted-stm32-rtos-bootloader
+          - --set
+          - minRunners=1
+          - --set
+          - maxRunners=4
+          - --values
+          - /tmp/arc-runner-values.yaml
+          - --wait
+          - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+    - name: Install ARC runner scale set (opi3z-yocto)
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - arc-runner-set-opi3z-yocto
+          - --namespace
+          - arc-runners
+          - --version
+          - "{{ arc_chart_version }}"
+          - --set
+          - githubConfigUrl=https://github.com/PoSRP/opi3z-yocto
+          - --set
+          - githubConfigSecret=github-token
+          - --set
+          - runnerScaleSetName=selfhosted-opi3z-yocto
+          - --set
+          - minRunners=1
+          - --set
+          - maxRunners=1
+          - --values
+          - /tmp/arc-runner-values.yaml
+          - --wait
+          - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml

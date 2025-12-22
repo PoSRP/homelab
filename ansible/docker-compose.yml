@@ -1,0 +1,11 @@
+services:
+  ansible:
+    image: cytopia/ansible:latest-tools
+    container_name: ansible
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+      - ANSIBLE_PRIVATE_KEY_FILE=/ssh/id_ed25519_vm_ansible
+    volumes:
+      - .:/ansible
+      - ../ssh:/ssh:ro
+    working_dir: /ansible

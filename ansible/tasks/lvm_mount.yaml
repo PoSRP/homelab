@@ -1,0 +1,36 @@
+---
+- name: Ensure LVM tools are installed
+  ansible.builtin.apt:
+    name: lvm2
+    state: present
+    update_cache: true
+
+- name: Create volume group
+  community.general.lvg:
+    vg: "{{ lvm_vg }}"
+    pvs: "{{ lvm_pvs }}"
+
+- name: Create logical volume
+  community.general.lvol:
+    vg: "{{ lvm_vg }}"
+    lv: "{{ lvm_lv }}"
+    size: "{{ lvm_size | default('100%VG') }}"
+
+- name: Create filesystem
+  ansible.builtin.filesystem:
+    fstype: "{{ lvm_fs | default('ext4') }}"
+    dev: "/dev/{{ lvm_vg }}/{{ lvm_lv }}"
+
+- name: Ensure mount point exists
+  ansible.builtin.file:
+    path: "{{ lvm_mount }}"
+    state: directory
+    mode: "0755"
+
+- name: Mount volume
+  ansible.builtin.mount:
+    path: "{{ lvm_mount }}"
+    src: "/dev/{{ lvm_vg }}/{{ lvm_lv }}"
+    fstype: "{{ lvm_fs | default('ext4') }}"
+    opts: "{{ lvm_opts | default('defaults') }}"
+    state: mounted

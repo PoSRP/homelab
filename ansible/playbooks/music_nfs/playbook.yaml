@@ -1,0 +1,94 @@
+---
+- name: Setup NFS server for music files
+  hosts: music_nfs
+  become: true
+  gather_facts: false
+
+  vars:
+    export_path: /mnt/data/music
+    export_network: 192.168.1.0/24
+    username: musicnfs
+
+  handlers:
+    - name: Reload NFS
+      ansible.builtin.command: exportfs -ra
+      changed_when: false
+
+  tasks:
+
+    - name: Wait for apt to be ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    # --- LVM setup ---
+
+    - name: Ensure LVM disk
+      ansible.builtin.include_tasks: ../../tasks/lvm_mount.yaml
+      vars:
+        lvm_vg: data_vg
+        lvm_lv: data_lv
+        lvm_pvs: /dev/sdb
+        lvm_mount: /mnt/data
+
+    # --- User setup ---
+
+    - name: Create user group
+      ansible.builtin.group:
+        name: "{{ username }}"
+        state: present
+
+    - name: Create user
+      ansible.builtin.user:
+        name: "{{ username }}"
+        group: "{{ username }}"
+        system: yes
+        create_home: no
+
+    # --- NFS setup ---
+
+    - name: Install NFS server
+      ansible.builtin.apt:
+        name: nfs-kernel-server
+        state: present
+
+    - name: Ensure export directory exists
+      ansible.builtin.file:
+        path: "{{ export_path }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0755"
+
+    - name: Ensure NFS export directory exists
+      ansible.builtin.file:
+        path: /etc/exports.d
+        state: directory
+        mode: "0755"
+
+    - name: Configure NFS export
+      ansible.builtin.copy:
+        dest: /etc/exports.d/music.exports
+        content: |
+          {{ export_path }} {{ export_network }}(rw,sync,no_subtree_check,no_root_squash)
+        owner: "{{ username }}"
+        group: "{{ username }}"
+        mode: "0644"
+      notify: Reload NFS
+
+    - name: Ensure NFS server is running and enabled
+      ansible.builtin.service:
+        name: nfs-kernel-server
+        state: started
+        enabled: true
+
+    # --- Optional firewall ---
+
+    - name: Allow NFS through firewall
+      ansible.builtin.ufw:
+        rule: allow
+        name: NFS
+      when: ansible_facts.services['ufw'] is defined
+
+    # --- Write ansible sentinel ---
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml

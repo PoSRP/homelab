@@ -1,0 +1,13 @@
+services:
+  terraform:
+    image: hashicorp/terraform:1.14
+    container_name: terraform
+    env_file:
+      - .terraform.env
+    environment:
+      - TF_DATA_DIR=/data
+    volumes:
+      - .:/config
+      - ./data:/data
+      - ../ssh:/ssh:ro
+    working_dir: /config/envs/${TERRAFORM_ENV}

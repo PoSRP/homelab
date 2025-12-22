@@ -1,0 +1,85 @@
+---
+- name: Fetch join token from master
+  hosts: k3s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: Read node token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: k3s_token_raw
+
+- name: Configure k3s worker
+  hosts: k3s_worker_1
+  become: true
+  gather_facts: false
+
+  vars:
+    k3s_version: "v1.33.1+k3s1"
+    k3s_master_ip: "{{ hostvars[groups['k3s_master'][0]]['ansible_host'] }}"
+    k3s_token: "{{ hostvars[groups['k3s_master'][0]]['k3s_token_raw']['content'] | b64decode | trim }}"
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    # --- Swap ---
+
+    - name: Create swapfile
+      ansible.builtin.command:
+        cmd: fallocate -l 32G /swapfile
+        creates: /swapfile
+
+    - name: Set swapfile permissions
+      ansible.builtin.file:
+        path: /swapfile
+        mode: "0600"
+
+    - name: Format swapfile
+      ansible.builtin.command: mkswap /swapfile
+      register: mkswap_result
+      changed_when: mkswap_result.rc == 0
+      failed_when: mkswap_result.rc != 0
+
+    - name: Enable swapfile
+      ansible.builtin.command: swapon /swapfile
+      register: swapon_result
+      failed_when: swapon_result.rc != 0 and "already" not in swapon_result.stderr
+      changed_when: swapon_result.rc == 0
+
+    - name: Persist swapfile in fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: /swapfile none swap sw 0 0
+        state: present
+
+    # --- k3s ---
+
+    - name: Install curl
+      ansible.builtin.apt:
+        name: curl
+        state: present
+
+    - name: Install k3s agent
+      ansible.builtin.shell:
+        cmd: >
+          curl -sfL https://get.k3s.io |
+          K3S_URL="https://{{ k3s_master_ip }}:6443"
+          K3S_TOKEN="{{ k3s_token }}"
+          INSTALL_K3S_VERSION="{{ k3s_version }}"
+          sh -
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for k3s agent to be active
+      ansible.builtin.command: systemctl is-active k3s-agent
+      register: svc_status
+      until: svc_status.stdout == "active"
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml

@@ -1,0 +1,5 @@
+- name: Write ansible run timestamp
+  ansible.builtin.copy:
+    dest: /etc/ansible_last_run
+    content: "{{ ansible_facts['date_time'].iso8601 }}\n"
+    mode: "0644"

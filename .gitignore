@@ -1,0 +1,9 @@
+terraform/data/
+**/.terraform.lock.hcl
+**/.terraform.tfstate.lock.info
+**/*.tfstate
+**/*.tfstate.backup
+**/snippets/*
+
+**/.venv
+**/__pycache__

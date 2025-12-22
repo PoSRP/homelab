@@ -1,0 +1,55 @@
+#cloud-config
+hostname: ${hostname}
+create_hostname_file: true
+
+users:
+  - name: ansible
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${ansible_ssh_public_key}
+  - name: root
+    ssh_authorized_keys:
+      - ${root_ssh_public_key}
+
+disable_root: false
+ssh_pwauth: false
+
+disk_setup:
+  /dev/sda:
+    table_type: gpt
+    layout: true
+    overwrite: false
+
+fs_setup:
+  - device: /dev/sda1
+    filesystem: ext4
+    label: root
+
+package_update: true
+package_upgrade: true
+packages:
+  - python3
+  - python3-apt
+  - sudo
+  - ca-certificates
+  - unattended-upgrades
+
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    permissions: '0644'
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      PubkeyAuthentication yes
+
+runcmd:
+  - dpkg-reconfigure -f noninteractive unattended-upgrades
+  - systemctl reload ssh

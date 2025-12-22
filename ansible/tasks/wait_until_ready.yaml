@@ -1,0 +1,27 @@
+---
+- name: Wait for SSH to become available
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+    sleep: 5
+
+- name: Gather facts
+  ansible.builtin.setup:
+
+- name: Wait for cloud-init to complete
+  ansible.builtin.command: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+  timeout: 900
+
+- name: Wait for automatic apt operations to finish
+  ansible.builtin.shell:
+    cmd: |
+      while fuser /var/lib/apt/lists/lock \
+                  /var/lib/dpkg/lock \
+                  /var/lib/dpkg/lock-frontend \
+                  /var/cache/apt/archives/lock \
+                  >/dev/null 2>&1; do
+        sleep 3
+      done
+  changed_when: false
+  timeout: 900

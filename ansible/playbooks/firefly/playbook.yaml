@@ -1,0 +1,220 @@
+---
+- name: Setup Firefly III
+  hosts: firefly
+  become: true
+  gather_facts: false
+
+  vars:
+    db_password: "{{ lookup('env', 'ANSIBLE_VAR_FIREFLY_DB_PASSWORD') }}"
+    app_key: "{{ lookup('env', 'ANSIBLE_VAR_FIREFLY_APP_KEY') }}"
+    cron_token: "{{ lookup('env', 'ANSIBLE_VAR_FIREFLY_CRON_TOKEN') }}"
+    firefly_url: "http://firefly.homelab.local"
+    firefly_dir: /opt/firefly-iii
+    firefly_data: /mnt/data/firefly
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    - name: Ensure LVM disk
+      ansible.builtin.include_tasks: ../../tasks/lvm_mount.yaml
+      vars:
+        lvm_vg: data_vg
+        lvm_lv: data_lv
+        lvm_pvs: /dev/sdb
+        lvm_mount: /mnt/data
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - docker.io
+          - docker-compose
+          - python3-pip
+        state: present
+        update_cache: true
+
+    - name: Install Docker Python SDK
+      ansible.builtin.pip:
+        name: docker
+        extra_args: --break-system-packages
+
+    - name: Add ansible user to docker group
+      ansible.builtin.user:
+        name: ansible
+        groups: docker
+        append: yes
+
+    - name: Create Firefly install directory
+      ansible.builtin.file:
+        path: "{{ firefly_dir }}"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: "0755"
+
+    - name: Create Firefly persistent directories
+      ansible.builtin.file:
+        path: "{{ firefly_data }}/{{ item }}"
+        state: directory
+        owner: "33"
+        group: "33"
+        mode: "0755"
+      loop:
+        - db
+        - upload
+        - export
+
+    - name: Write docker-compose file
+      ansible.builtin.copy:
+        dest: "{{ firefly_dir }}/docker-compose.yml"
+        owner: ansible
+        group: ansible
+        mode: "0644"
+        content: |
+          services:
+            app:
+              image: fireflyiii/core:latest
+              hostname: app
+              container_name: firefly_iii_core
+              networks:
+                - firefly_iii
+              restart: always
+              volumes:
+                - {{ firefly_data }}/upload:/var/www/html/storage/upload
+                - {{ firefly_data }}/export:/var/www/html/storage/export
+              env_file: .env
+              ports:
+                - '80:8080'
+              depends_on:
+                - db
+
+            db:
+              image: mariadb:lts
+              hostname: db
+              container_name: firefly_iii_db
+              networks:
+                - firefly_iii
+              restart: always
+              env_file: .db.env
+              volumes:
+                - {{ firefly_data }}/db:/var/lib/mysql
+
+            importer:
+              image: fireflyiii/data-importer:latest
+              hostname: importer
+              container_name: firefly_iii_importer
+              networks:
+                - firefly_iii
+              restart: always
+              ports:
+                - '81:8080'
+              depends_on:
+                - app
+              env_file: .importer.env
+
+            cron:
+              image: alpine
+              container_name: firefly_iii_cron
+              networks:
+                - firefly_iii
+              restart: always
+              command: >
+                sh -c 'apk add --no-cache tzdata &&
+                echo "0 3 * * * wget -qO- http://app:8080/api/v1/cron/{{ cron_token }}; echo" | crontab - &&
+                crond -f -L /dev/stdout'
+              depends_on:
+                - app
+
+          networks:
+            firefly_iii:
+              driver: bridge
+
+    # force: false - only downloaded on first deploy; subsequent runs leave
+    # them untouched so manual edits and runtime state are preserved.
+
+    - name: Download Firefly III env
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/firefly-iii/firefly-iii/main/.env.example
+        dest: "{{ firefly_dir }}/.env"
+        force: false
+        mode: "0440"
+        owner: ansible
+        group: ansible
+
+    - name: Download Firefly III importer env
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/firefly-iii/data-importer/main/.env.example
+        dest: "{{ firefly_dir }}/.importer.env"
+        force: false
+        mode: "0440"
+        owner: ansible
+        group: ansible
+
+    - name: Download Firefly III database env
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/firefly-iii/docker/main/database.env
+        dest: "{{ firefly_dir }}/.db.env"
+        force: false
+        mode: "0440"
+        owner: ansible
+        group: ansible
+
+    - name: Set app key in Firefly III env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.env"
+        regexp: '^APP_KEY='
+        line: "APP_KEY={{ app_key }}"
+        backrefs: yes
+      no_log: true
+
+    - name: Set DB password in Firefly III env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.env"
+        regexp: '^DB_PASSWORD='
+        line: "DB_PASSWORD={{ db_password }}"
+        backrefs: yes
+      no_log: true
+
+    - name: Set app URL in Firefly III env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.env"
+        regexp: '^APP_URL='
+        line: "APP_URL={{ firefly_url }}"
+        backrefs: yes
+
+    - name: Set password in Firefly III database env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.db.env"
+        regexp: '^MYSQL_PASSWORD='
+        line: "MYSQL_PASSWORD={{ db_password }}"
+        backrefs: yes
+      no_log: true
+
+    - name: Set Firefly URL in importer env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.importer.env"
+        regexp: '^FIREFLY_III_URL='
+        line: "FIREFLY_III_URL=http://app:8080"
+        backrefs: yes
+
+    - name: Set vanity URL in importer env
+      ansible.builtin.lineinfile:
+        path: "{{ firefly_dir }}/.importer.env"
+        regexp: '^VANITY_URL='
+        line: "VANITY_URL={{ firefly_url }}"
+        backrefs: yes
+
+    - name: Start Firefly stack
+      ansible.builtin.command:
+        cmd: docker-compose up -d
+        chdir: "{{ firefly_dir }}"
+      register: _compose_up
+      changed_when: "'Started' in _compose_up.stdout or 'Created' in _compose_up.stdout"
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml
