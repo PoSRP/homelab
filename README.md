@@ -23,6 +23,7 @@
 | VM             | VMID | Boot disk | Data disk | Notes                         |
 |----------------|:----:|:---------:|:---------:|-------------------------------|
 | `local_dns`    | 8207 | 16G       | -         | dnsmasq + nginx reverse proxy |
+| `grafana`      | 8208 | 16G       | 256G      | grafana + influxdb database   |
 | `firefly`      | 8210 | 16G       | 128G      | Economy tracking              |
 | `image_nfs`    | 8212 | 16G       | 512G      | Image/photo storage NFS       |
 | `k3s_master`   | 8214 | 32G       | -         | K3S cluster controller        |
@@ -68,6 +69,15 @@ export ANSIBLE_VAR_FIREFLY_CRON_TOKEN=""
 ```
 
 App-key and cron token should be 32-char.
+
+### Grafana + InfluxDB
+
+```sh
+export ANSIBLE_VAR_GRAFANA_ADMIN_PASSWORD=""
+export ANSIBLE_VAR_GRAFANA_SECRET_KEY=""
+export ANSIBLE_VAR_INFLUXDB_ADMIN_PASSWORD=""
+export ANSIBLE_VAR_INFLUXDB_ADMIN_TOKEN=""
+```
 
 ### K3S master
 
