@@ -15,8 +15,10 @@
     influxdb_org: homelab
     influxdb_init_bucket: default
     influxdb_buckets:
-      - proxmox-metrics
-      - nixos-metrics
+      - name: proxmox-metrics
+        retention: 7776000 # 90 days
+      - name: nixos-metrics
+        retention: 31536000 # 365 days
 
   tasks:
 
@@ -94,7 +96,7 @@
               jsonData:
                 version: Flux
                 organization: {{ influxdb_org }}
-                defaultBucket: {{ influxdb_buckets[0] }}
+                defaultBucket: {{ influxdb_buckets[0].name }}
               secureJsonData:
                 token: {{ influxdb_admin_token }}
       no_log: true
@@ -164,7 +166,17 @@
       register: _influxdb_orgs
       no_log: true
 
-    - name: Ensure InfluxDB buckets exist
+    - name: Check InfluxDB bucket existence
+      ansible.builtin.uri:
+        url: "http://localhost:8086/api/v2/buckets?name={{ item.name }}&orgID={{ _influxdb_orgs.json.orgs[0].id }}"
+        headers:
+          Authorization: "Token {{ influxdb_admin_token }}"
+        status_code: 200
+      register: _bucket_check
+      loop: "{{ influxdb_buckets }}"
+      no_log: true
+
+    - name: Create new InfluxDB buckets
       ansible.builtin.uri:
         url: http://localhost:8086/api/v2/buckets
         method: POST
@@ -172,13 +184,31 @@
           Authorization: "Token {{ influxdb_admin_token }}"
         body_format: json
         body:
-          name: "{{ item }}"
+          name: "{{ item.item.name }}"
           orgID: "{{ _influxdb_orgs.json.orgs[0].id }}"
-          retentionRules: []
-        status_code: [201, 422]
-      register: _bucket_result
-      changed_when: _bucket_result.status == 201
-      loop: "{{ influxdb_buckets }}"
+          retentionRules: "{{ [] if (item.item.retention | default(0) | int) == 0 else [{'type': 'expire', 'everySeconds': item.item.retention | int}] }}"
+        status_code: 201
+      when: item.json.buckets | length == 0
+      changed_when: true
+      loop: "{{ _bucket_check.results }}"
+      no_log: true
+
+    - name: Update InfluxDB bucket retention policies
+      ansible.builtin.uri:
+        url: "http://localhost:8086/api/v2/buckets/{{ item.json.buckets[0].id }}"
+        method: PATCH
+        headers:
+          Authorization: "Token {{ influxdb_admin_token }}"
+        body_format: json
+        body:
+          retentionRules: "{{ [] if (item.item.retention | default(0) | int) == 0 else [{'type': 'expire', 'everySeconds': item.item.retention | int}] }}"
+        status_code: 200
+      when: item.json.buckets | length > 0
+      changed_when: >-
+        (item.json.buckets[0].retentionRules | length == 0 and (item.item.retention | default(0) | int) != 0) or
+        (item.json.buckets[0].retentionRules | length > 0 and
+         item.json.buckets[0].retentionRules[0].everySeconds != (item.item.retention | default(0) | int))
+      loop: "{{ _bucket_check.results }}"
       no_log: true
 
     - name: Write ansible run timestamp
