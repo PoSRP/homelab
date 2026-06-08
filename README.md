@@ -79,6 +79,17 @@ export ANSIBLE_VAR_INFLUXDB_ADMIN_PASSWORD=""
 export ANSIBLE_VAR_INFLUXDB_ADMIN_TOKEN=""
 ```
 
+To get Proxmox set up for pushing metrics data:
+
+```
+- IP: 192.168.1.208
+- Port: 8086
+- Protocol: HTTP
+- Organization: homelab
+- Bucket: proxmox-metrics
+- Token: <ANSIBLE_VAR_INFLUXDB_ADMIN_TOKEN>
+```
+
 ### K3S master
 
 ```sh
