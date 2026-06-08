@@ -1,5 +1,0 @@
-[allowlist]
-paths = [
-  '''\.env$''',
-  '''^ssh/''',
-]
