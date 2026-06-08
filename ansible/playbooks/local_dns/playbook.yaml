@@ -22,6 +22,10 @@
         backend: http://192.168.1.210:80
       - name: fireflyimport
         backend: http://192.168.1.210:81
+      - name: grafana
+        backend: http://192.168.1.208:3000
+      - name: influxdb
+        backend: http://192.168.1.208:8086
 
   handlers:
     - name: Restart dnsmasq
