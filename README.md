@@ -60,6 +60,16 @@ You can find more in `tui/screenshots`.
 
 ## Required environment files
 
+### Terraform
+
+```sh
+export TF_VAR_proxmox_api_url=""
+export TF_VAR_proxmox_api_token_id=""
+export TF_VAR_proxmox_api_token=""
+export TF_VAR_ansible_pub_key=""
+export TF_VAR_root_pub_key=""
+```
+
 ### Firefly
 
 ```sh
