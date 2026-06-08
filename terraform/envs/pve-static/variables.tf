@@ -66,5 +66,12 @@ variable "vm_configs" {
       data_disk = {size = "512G"}
     }
 
+    grafana_data = {
+      name      = "grafana-data"
+      tags      = "data,timeseries,visualization"
+      vmid      = 8508
+      data_disk = {size = "256G"}
+    }
+
   }
 }

@@ -152,5 +152,17 @@ variable "vm_configs" {
       ipconfig       = "ip=192.168.1.215/24,gw=192.168.1.1"
     }
 
+    grafana = {
+      name           = "grafana"
+      tags           = "vm,timeseries,visualization"
+      vmid           = 8208
+      memory         = 2048
+      minimum_memory = 1024
+      cores          = 4
+      boot_disk      = {size = "16G", storage = "local-zfs"}
+      passthrough_disk = {disk_file = "bulk-zfs:vm-8508-disk-0"}
+      ipconfig       = "ip=192.168.1.208/24,gw=192.168.1.1"
+    }
+
   }
 }

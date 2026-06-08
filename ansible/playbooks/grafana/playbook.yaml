@@ -1,0 +1,185 @@
+---
+- name: Setup Grafana and InfluxDB
+  hosts: grafana
+  become: true
+  gather_facts: false
+
+  vars:
+    grafana_admin_pwd: "{{ lookup('env', 'ANSIBLE_VAR_GRAFANA_ADMIN_PASSWORD') }}"
+    grafana_secret_key: "{{ lookup('env', 'ANSIBLE_VAR_GRAFANA_SECRET_KEY') }}"
+    influxdb_admin_pwd: "{{ lookup('env', 'ANSIBLE_VAR_INFLUXDB_ADMIN_PASSWORD') }}"
+    influxdb_admin_token: "{{ lookup('env', 'ANSIBLE_VAR_INFLUXDB_ADMIN_TOKEN') }}"
+    grafana_dir: /opt/grafana
+    grafana_data: /mnt/data/grafana
+    influxdb_data: /mnt/data/influxdb
+    influxdb_org: homelab
+    influxdb_init_bucket: default
+    influxdb_buckets:
+      - proxmox-metrics
+      - nixos-metrics
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    - name: Ensure LVM disk
+      ansible.builtin.include_tasks: ../../tasks/lvm_mount.yaml
+      vars:
+        lvm_vg: data_vg
+        lvm_lv: data_lv
+        lvm_pvs: /dev/sdb
+        lvm_mount: /mnt/data
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - docker.io
+          - docker-compose
+          - python3-pip
+        state: present
+        update_cache: true
+
+    - name: Install Docker Python SDK
+      ansible.builtin.pip:
+        name: docker
+        extra_args: --break-system-packages
+
+    - name: Add ansible user to docker group
+      ansible.builtin.user:
+        name: ansible
+        groups: docker
+        append: yes
+
+    - name: Create install and provisioning directories
+      ansible.builtin.file:
+        path: "{{ grafana_dir }}/provisioning/datasources"
+        state: directory
+        owner: ansible
+        group: ansible
+        mode: "0755"
+
+    - name: Create Grafana persistent data directory
+      ansible.builtin.file:
+        path: "{{ grafana_data }}"
+        state: directory
+        owner: "472"
+        group: "472"
+        mode: "0755"
+
+    - name: Create InfluxDB persistent data directory
+      ansible.builtin.file:
+        path: "{{ influxdb_data }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write Grafana InfluxDB datasource provisioning
+      ansible.builtin.copy:
+        dest: "{{ grafana_dir }}/provisioning/datasources/influxdb.yaml"
+        owner: ansible
+        group: ansible
+        mode: "0644"
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: InfluxDB
+              type: influxdb
+              url: http://influxdb:8086
+              jsonData:
+                version: Flux
+                organization: {{ influxdb_org }}
+                defaultBucket: {{ influxdb_buckets[0] }}
+              secureJsonData:
+                token: {{ influxdb_admin_token }}
+      no_log: true
+
+    - name: Write docker-compose file
+      ansible.builtin.copy:
+        dest: "{{ grafana_dir }}/docker-compose.yml"
+        owner: ansible
+        group: ansible
+        mode: "0644"
+        content: |
+          services:
+            influxdb:
+              image: influxdb:2
+              container_name: influxdb
+              restart: always
+              ports:
+                - "8086:8086"
+              volumes:
+                - {{ influxdb_data }}:/var/lib/influxdb2
+              environment:
+                - DOCKER_INFLUXDB_INIT_MODE=setup
+                - DOCKER_INFLUXDB_INIT_USERNAME=admin
+                - DOCKER_INFLUXDB_INIT_PASSWORD={{ influxdb_admin_pwd }}
+                - DOCKER_INFLUXDB_INIT_ORG={{ influxdb_org }}
+                - DOCKER_INFLUXDB_INIT_BUCKET={{ influxdb_init_bucket }}
+                - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN={{ influxdb_admin_token }}
+
+            grafana:
+              image: grafana/grafana:latest
+              container_name: grafana
+              restart: always
+              ports:
+                - "3000:3000"
+              volumes:
+                - {{ grafana_data }}:/var/lib/grafana
+                - {{ grafana_dir }}/provisioning:/etc/grafana/provisioning
+              environment:
+                - GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_pwd }}
+                - GF_SECURITY_SECRET_KEY={{ grafana_secret_key }}
+              depends_on:
+                - influxdb
+      no_log: true
+
+    - name: Start Grafana stack
+      ansible.builtin.command:
+        cmd: docker-compose up -d
+        chdir: "{{ grafana_dir }}"
+      register: _compose_up
+      changed_when: "'Started' in _compose_up.stdout or 'Created' in _compose_up.stdout"
+
+    - name: Wait for InfluxDB to be ready
+      ansible.builtin.uri:
+        url: http://localhost:8086/health
+        status_code: 200
+      register: _influxdb_health
+      until: _influxdb_health.status == 200
+      retries: 30
+      delay: 2
+
+    - name: Get InfluxDB org ID
+      ansible.builtin.uri:
+        url: "http://localhost:8086/api/v2/orgs?name={{ influxdb_org }}"
+        headers:
+          Authorization: "Token {{ influxdb_admin_token }}"
+        status_code: 200
+      register: _influxdb_orgs
+      no_log: true
+
+    - name: Ensure InfluxDB buckets exist
+      ansible.builtin.uri:
+        url: http://localhost:8086/api/v2/buckets
+        method: POST
+        headers:
+          Authorization: "Token {{ influxdb_admin_token }}"
+        body_format: json
+        body:
+          name: "{{ item }}"
+          orgID: "{{ _influxdb_orgs.json.orgs[0].id }}"
+          retentionRules: []
+        status_code: [201, 422]
+      register: _bucket_result
+      changed_when: _bucket_result.status == 201
+      loop: "{{ influxdb_buckets }}"
+      no_log: true
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml
