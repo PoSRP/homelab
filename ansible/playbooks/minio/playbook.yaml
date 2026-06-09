@@ -8,6 +8,7 @@
     minio_admin_pwd: "{{ lookup('env', 'ANSIBLE_VAR_MINIO_ADMIN_PASSWORD') }}"
     minio_data_dir: /mnt/data/minio
     minio_deb_url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio_20250907161309.0.0_amd64.deb"
+    minio_mc_url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.RELEASE.2025-08-13T08-35-41Z"
 
   tasks:
 
@@ -99,6 +100,38 @@
       notify:
         - Reload systemd
         - Restart MinIO
+
+    - name: Flush handlers to ensure MinIO is running before bucket setup
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for MinIO API to be ready
+      ansible.builtin.wait_for:
+        port: 9000
+        host: localhost
+        timeout: 60
+
+    - name: Download mc client
+      ansible.builtin.get_url:
+        url: "{{ minio_mc_url }}"
+        dest: /usr/local/bin/mc
+        mode: '0755'
+
+    - name: Configure mc alias for local MinIO
+      ansible.builtin.command:
+        cmd: mc alias set local http://localhost:9000 admin "{{ minio_admin_pwd }}"
+      changed_when: false
+      no_log: true
+
+    - name: Create nixos-metrics bucket with object locking
+      ansible.builtin.command:
+        cmd: mc mb --with-lock --ignore-existing local/nixos-metrics
+      register: mc_mb_result
+      changed_when: "'Bucket created successfully' in mc_mb_result.stdout"
+
+    - name: Set 365-day GOVERNANCE retention on nixos-metrics
+      ansible.builtin.command:
+        cmd: mc retention set --default GOVERNANCE 365d local/nixos-metrics
+      changed_when: false
 
     - name: Write ansible run timestamp
       ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml
