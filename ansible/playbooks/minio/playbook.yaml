@@ -133,6 +133,24 @@
         cmd: mc retention set --default GOVERNANCE 365d local/nixos-metrics
       changed_when: false
 
+    - name: Create opi3z-yocto-cache bucket
+      ansible.builtin.command:
+        cmd: mc mb --ignore-existing local/opi3z-yocto-cache
+      register: mc_mb_result
+      changed_when: "'Bucket created successfully' in mc_mb_result.stdout"
+
+    - name: Check existing ILM rules on opi3z-yocto-cache
+      ansible.builtin.command:
+        cmd: mc ilm rule list local/opi3z-yocto-cache
+      register: mc_ilm_list
+      changed_when: false
+      failed_when: false
+
+    - name: Set 90-day expiration lifecycle on opi3z-yocto-cache
+      ansible.builtin.command:
+        cmd: mc ilm rule add --expire-days 90 local/opi3z-yocto-cache
+      when: "'Expiration' not in mc_ilm_list.stdout"
+
     - name: Write ansible run timestamp
       ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml
 
