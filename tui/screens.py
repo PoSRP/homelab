@@ -400,7 +400,7 @@ class AddMachineScreen(Screen):
         color: $text-muted;
         padding-left: 1;
     }
-    #data-size-row {
+    #data-size-row, #data-storage-row {
         display: none;
     }
     #form-error {
@@ -468,6 +468,10 @@ class AddMachineScreen(Screen):
                 yield Static("Data disk size", classes="label")
                 yield Input(placeholder="512G", id="inp-data-size", classes="inp")
                 yield Static("e.g. 512G, 1T", classes="hint")
+            with Horizontal(classes="row", id="data-storage-row"):
+                yield Static("Data disk pool", classes="label")
+                yield Switch(id="data-storage-switch", value=False)
+                yield Static("off: bulk-zfs    on: local-zfs", classes="hint")
             yield Static("", id="form-error")
             yield Static("", id="form-success")
             yield Static("\\[Ctrl+S] submit    \\[Esc] cancel", id="form-actions")
@@ -479,7 +483,9 @@ class AddMachineScreen(Screen):
         self.query_one("#inp-name", Input).focus()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        self.query_one("#data-size-row").display = event.value
+        if event.switch.id == "data-disk-switch":
+            self.query_one("#data-size-row").display = event.value
+            self.query_one("#data-storage-row").display = event.value
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "inp-vmid":
@@ -511,6 +517,7 @@ class AddMachineScreen(Screen):
         extra_tags = self.query_one("#inp-tags", Input).value.strip()
         has_data = self.query_one("#data-disk-switch", Switch).value
         data_size = self.query_one("#inp-data-size", Input).value.strip()
+        data_storage = "local-zfs" if self.query_one("#data-storage-switch", Switch).value else "bulk-zfs"
 
         if not name:
             self._error("Name is required.")
@@ -582,6 +589,7 @@ class AddMachineScreen(Screen):
                 extra_tags=extra_tags,
                 data_disk=has_data,
                 data_disk_size=data_size,
+                data_disk_storage=data_storage,
             )
         except Exception as exc:
             self._error(f"Failed: {exc}")
