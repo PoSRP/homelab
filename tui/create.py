@@ -120,6 +120,7 @@ def add_pve_entry(
     boot_disk_size: str,
     extra_tags: str,
     data_disk: bool,
+    data_disk_storage: str = "bulk-zfs",
 ) -> None:
     name = key.replace("_", "-")
     ip_last = vmid % 1000
@@ -129,7 +130,7 @@ def add_pve_entry(
     passthrough_line = ""
     if data_disk:
         passthrough_line = (
-            f'\n      passthrough_disk = {{disk_file = "bulk-zfs:vm-{data_vmid}-disk-0"}}'
+            f'\n      passthrough_disk = {{disk_file = "{data_disk_storage}:vm-{data_vmid}-disk-0"}}'
         )
 
     entry = (
@@ -153,17 +154,22 @@ def add_pve_static_entry(
     vmid: int,
     extra_tags: str,
     data_disk_size: str,
+    data_disk_storage: str = "bulk-zfs",
 ) -> None:
     name = key.replace("_", "-")
     data_vmid = vmid + 300
     tags = _join_tags("data", extra_tags)
+
+    data_disk_body = f'size = "{data_disk_size}"'
+    if data_disk_storage != "bulk-zfs":
+        data_disk_body += f', storage = "{data_disk_storage}"'
 
     entry = (
         f"    {key}_data = {{\n"
         f'      name      = "{name}-data"\n'
         f'      tags      = "{tags}"\n'
         f"      vmid      = {data_vmid}\n"
-        f'      data_disk = {{size = "{data_disk_size}"}}\n'
+        f'      data_disk = {{{data_disk_body}}}\n'
         f"    }}"
     )
     _PVE_STATIC_VARS.write_text(_insert_hcl_entry(_PVE_STATIC_VARS.read_text(), entry))
@@ -272,9 +278,13 @@ def create_machine(
     extra_tags: str,
     data_disk: bool,
     data_disk_size: str,
+    data_disk_storage: str = "bulk-zfs",
 ) -> None:
-    add_pve_entry(key, vmid, memory, minimum_memory, cores, boot_disk_size, extra_tags, data_disk)
+    add_pve_entry(
+        key, vmid, memory, minimum_memory, cores, boot_disk_size, extra_tags,
+        data_disk, data_disk_storage,
+    )
     if data_disk:
-        add_pve_static_entry(key, vmid, extra_tags, data_disk_size)
+        add_pve_static_entry(key, vmid, extra_tags, data_disk_size, data_disk_storage)
     add_inventory_entry(key, vmid)
     create_playbook(key, data_disk)
