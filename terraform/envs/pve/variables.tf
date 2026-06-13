@@ -164,5 +164,17 @@ variable "vm_configs" {
       ipconfig       = "ip=192.168.1.208/24,gw=192.168.1.1"
     }
 
+    minio_yocto = {
+      name           = "minio-yocto"
+      tags           = "vm,objects,s3,cache"
+      vmid           = 8222
+      memory         = 4192
+      minimum_memory = 1024
+      cores          = 2
+      boot_disk      = {size = "16G", storage = "local-zfs"}
+      passthrough_disk = {disk_file = "local-zfs:vm-8522-disk-0"}
+      ipconfig       = "ip=192.168.1.222/24,gw=192.168.1.1"
+    }
+
   }
 }

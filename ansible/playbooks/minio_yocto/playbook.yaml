@@ -1,0 +1,155 @@
+---
+- name: Setup minio yocto cache
+  hosts: minio_yocto
+  become: true
+  gather_facts: false
+
+  vars:
+    minio_admin_pwd: "{{ lookup('env', 'ANSIBLE_VAR_MINIO_ADMIN_PASSWORD') }}"
+    minio_data_dir: /mnt/data/minio
+    minio_deb_url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio_20250907161309.0.0_amd64.deb"
+    minio_mc_url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.RELEASE.2025-08-13T08-35-41Z"
+
+  tasks:
+
+    - name: Wait until ready
+      ansible.builtin.include_tasks: ../../tasks/wait_until_ready.yaml
+
+    - name: Ensure LVM disk
+      ansible.builtin.include_tasks: ../../tasks/lvm_mount.yaml
+      vars:
+        lvm_vg: data_vg
+        lvm_lv: data_lv
+        lvm_pvs: /dev/sdb
+        lvm_mount: /mnt/data
+
+    - name: Validate MinIO admin password
+      ansible.builtin.assert:
+        that:
+          - minio_admin_pwd | length >= 8
+        fail_msg: "Password must be ≥8 chars"
+
+    - name: Create MinIO group
+      ansible.builtin.group:
+        name: "minio-user"
+        state: present
+
+    - name: Create MinIO user
+      ansible.builtin.user:
+        name: "minio-user"
+        group: "minio-user"
+        system: yes
+        create_home: no
+
+    - name: Create data directory
+      ansible.builtin.file:
+        path: "{{ minio_data_dir }}"
+        state: directory
+        owner: "minio-user"
+        group: "minio-user"
+        mode: '0755'
+
+    - name: Install MinIO
+      ansible.builtin.apt:
+        deb: "{{minio_deb_url}}"
+        state: present
+      notify:
+        - Reload systemd
+        - Restart MinIO
+
+    - name: Create MinIO env config
+      ansible.builtin.copy:
+        dest: /etc/default/minio
+        content: |
+          MINIO_ROOT_USER=admin
+          MINIO_ROOT_PASSWORD="{{minio_admin_pwd}}"
+          MINIO_VOLUMES="{{minio_data_dir}}"
+          MINIO_OPTS=""
+          MINIO_CONSOLE_ADDRESS=:9001
+          MINIO_BROWSER_REDIRECT_URL=http://minio-yocto.homelab.local
+      notify:
+        - Restart MinIO
+
+    - name: Create systemd service file
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/minio.service
+        content: |
+          [Unit]
+          Description=MinIO
+          Documentation=https://min.io/docs/minio/linux/index.html
+          Wants=network-online.target
+          After=network-online.target
+          AssertFileIsExecutable=/usr/local/bin/minio
+
+          [Service]
+          WorkingDirectory=/usr/local
+          User=minio-user
+          Group=minio-user
+          ProtectProc=invisible
+          EnvironmentFile=-/etc/default/minio
+          ExecStartPre=/bin/bash -c "if [ -z \"${MINIO_VOLUMES}\" ]; then echo \"Variable MINIO_VOLUMES not set in /etc/default/minio\"; exit 1; fi"
+          ExecStart=/usr/local/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
+          Restart=always
+          LimitNOFILE=65536
+          TasksMax=infinity
+          TimeoutStopSec=infinity
+          SendSIGKILL=no
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+        - Restart MinIO
+
+    - name: Flush handlers to ensure MinIO is running before bucket setup
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for MinIO API to be ready
+      ansible.builtin.wait_for:
+        port: 9000
+        host: localhost
+        timeout: 60
+
+    - name: Download mc client
+      ansible.builtin.get_url:
+        url: "{{ minio_mc_url }}"
+        dest: /usr/local/bin/mc
+        mode: '0755'
+
+    - name: Configure mc alias for local MinIO
+      ansible.builtin.command:
+        cmd: mc alias set local http://localhost:9000 admin "{{ minio_admin_pwd }}"
+      changed_when: false
+      no_log: true
+
+    - name: Create yocto-cache bucket
+      ansible.builtin.command:
+        cmd: mc mb --ignore-existing local/yocto-cache
+      register: mc_mb_result
+      changed_when: "'Bucket created successfully' in mc_mb_result.stdout"
+
+    - name: Check existing ILM rules on yocto-cache
+      ansible.builtin.command:
+        cmd: mc ilm rule list local/yocto-cache
+      register: mc_ilm_list
+      changed_when: false
+      failed_when: false
+
+    - name: Set 90-day expiration lifecycle on yocto-cache
+      ansible.builtin.command:
+        cmd: mc ilm rule add --expire-days 90 local/yocto-cache
+      when: "'Expiration' not in mc_ilm_list.stdout"
+
+    - name: Write ansible run timestamp
+      ansible.builtin.include_tasks: ../../tasks/ansible_sentinel.yaml
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Restart MinIO
+      ansible.builtin.systemd:
+        name: minio
+        state: restarted
+        enabled: yes

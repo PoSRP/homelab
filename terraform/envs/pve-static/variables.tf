@@ -73,5 +73,12 @@ variable "vm_configs" {
       data_disk = {size = "256G"}
     }
 
+    minio_yocto_data = {
+      name      = "minio-yocto-data"
+      tags      = "data,objects,s3,cache"
+      vmid      = 8522
+      data_disk = {size = "128G", storage = "local-zfs"}
+    }
+
   }
 }
