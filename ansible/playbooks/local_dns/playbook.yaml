@@ -26,6 +26,8 @@
         backend: http://192.168.1.208:3000
       - name: influxdb
         backend: http://192.168.1.208:8086
+      - name: minio-yocto
+        backend: http://192.168.1.222:9001
 
   handlers:
     - name: Restart dnsmasq

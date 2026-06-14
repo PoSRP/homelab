@@ -32,6 +32,7 @@
 | `video_nfs`    | 8218 | 16G       | 512G      | Video storage NFS             |
 | `minio`        | 8220 | 16G       | 512G      | S3-compatible object storage  |
 | `music_nfs`    | 8221 | 16G       | 512G      | Music storage NFS             |
+| `minio_yocto`  | 8222 | 16G       | 128G      | Yocto build cache             |
 
 ### Templates
 
@@ -109,6 +110,12 @@ export ANSIBLE_VAR_GITHUB_TOKEN=""
 Needs repo-level `admin:rw` permissions to register runners from Github ARC.
 
 ### MinIO
+
+```sh
+export ANSIBLE_VAR_MINIO_ADMIN_PASSWORD=""
+```
+
+### MinIO Yocto
 
 ```sh
 export ANSIBLE_VAR_MINIO_ADMIN_PASSWORD=""
