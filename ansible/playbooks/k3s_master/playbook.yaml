@@ -199,23 +199,23 @@
           - --wait
           - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
-    - name: Install ARC runner scale set (stm32-rtos-bootloader)
+    - name: Install ARC runner scale set (ymir)
       ansible.builtin.command:
         argv:
           - helm
           - upgrade
           - --install
-          - arc-runner-set-stm32-rtos-bootloader
+          - arc-runner-set-ymir
           - --namespace
           - arc-runners
           - --version
           - "{{ arc_chart_version }}"
           - --set
-          - githubConfigUrl=https://github.com/PoSRP/stm32-rtos-bootloader
+          - githubConfigUrl=https://github.com/PoSRP/ymir
           - --set
           - githubConfigSecret=github-token
           - --set
-          - runnerScaleSetName=selfhosted-stm32-rtos-bootloader
+          - runnerScaleSetName=selfhosted-ymir
           - --set
           - minRunners=1
           - --set
