@@ -165,7 +165,7 @@
           - --set
           - runnerScaleSetName=selfhosted-nixos-desktop
           - --set
-          - minRunners=1
+          - minRunners=0
           - --set
           - maxRunners=1
           - --values
@@ -173,27 +173,27 @@
           - --wait
           - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
-    - name: Install ARC runner scale set (stm32-sensor-capture)
+    - name: Install ARC runner scale set (kvasir)
       ansible.builtin.command:
         argv:
           - helm
           - upgrade
           - --install
-          - arc-runner-set-stm32-sensor-capture
+          - arc-runner-set-kvasir
           - --namespace
           - arc-runners
           - --version
           - "{{ arc_chart_version }}"
           - --set
-          - githubConfigUrl=https://github.com/PoSRP/stm32-sensor-capture
+          - githubConfigUrl=https://github.com/PoSRP/kvasir
           - --set
           - githubConfigSecret=github-token
           - --set
-          - runnerScaleSetName=selfhosted-stm32-sensor-capture
+          - runnerScaleSetName=selfhosted-kvasir
           - --set
-          - minRunners=1
+          - minRunners=0
           - --set
-          - maxRunners=4
+          - maxRunners=1
           - --values
           - /tmp/arc-runner-values.yaml
           - --wait
@@ -217,9 +217,9 @@
           - --set
           - runnerScaleSetName=selfhosted-ymir
           - --set
-          - minRunners=1
+          - minRunners=0
           - --set
-          - maxRunners=4
+          - maxRunners=1
           - --values
           - /tmp/arc-runner-values.yaml
           - --wait
@@ -243,7 +243,7 @@
           - --set
           - runnerScaleSetName=selfhosted-opi3z-yocto
           - --set
-          - minRunners=1
+          - minRunners=0
           - --set
           - maxRunners=1
           - --values
