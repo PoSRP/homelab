@@ -147,23 +147,23 @@
                     - name: dind-sock
                       mountPath: /var/run
 
-    - name: Install ARC runner scale set (nixos-desktop)
+    - name: Install ARC runner scale set (nixos)
       ansible.builtin.command:
         argv:
           - helm
           - upgrade
           - --install
-          - arc-runner-set-nixos-desktop
+          - arc-runner-set-nixos
           - --namespace
           - arc-runners
           - --version
           - "{{ arc_chart_version }}"
           - --set
-          - githubConfigUrl=https://github.com/PoSRP/nixos-desktop
+          - githubConfigUrl=https://github.com/PoSRP/nixos
           - --set
           - githubConfigSecret=github-token
           - --set
-          - runnerScaleSetName=selfhosted-nixos-desktop
+          - runnerScaleSetName=selfhosted-nixos
           - --set
           - minRunners=0
           - --set
