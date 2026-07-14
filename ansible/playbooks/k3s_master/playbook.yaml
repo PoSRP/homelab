@@ -225,23 +225,23 @@
           - --wait
           - oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
-    - name: Install ARC runner scale set (opi3z-yocto)
+    - name: Install ARC runner scale set (yocto)
       ansible.builtin.command:
         argv:
           - helm
           - upgrade
           - --install
-          - arc-runner-set-opi3z-yocto
+          - arc-runner-set-yocto
           - --namespace
           - arc-runners
           - --version
           - "{{ arc_chart_version }}"
           - --set
-          - githubConfigUrl=https://github.com/PoSRP/opi3z-yocto
+          - githubConfigUrl=https://github.com/PoSRP/yocto
           - --set
           - githubConfigSecret=github-token
           - --set
-          - runnerScaleSetName=selfhosted-opi3z-yocto
+          - runnerScaleSetName=selfhosted-yocto
           - --set
           - minRunners=0
           - --set
